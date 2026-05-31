@@ -8,6 +8,23 @@
       <div><strong><?php echo $stat->categoriesNum; ?></strong><span>版块</span></div>
     </div>
   </section>
+
+  <?php if (!isset($this->options->enableStats) || (string)$this->options->enableStats !== '0'): $pdStats = pudubi_stats_data(); ?>
+  <section class="side-card analytics-card">
+    <h3><?php echo pudubi_e($this->options->statsTitle ?: '站点状态'); ?></h3>
+    <div class="analytics-grid">
+      <div><strong><?php echo pudubi_format_num($pdStats['online']); ?></strong><span>在线人数</span></div>
+      <div><strong><?php echo pudubi_format_num($pdStats['today']); ?></strong><span>今日访问</span></div>
+      <div><strong><?php echo pudubi_format_num($pdStats['yesterday']); ?></strong><span>昨日访问</span></div>
+      <div><strong><?php echo pudubi_format_num($pdStats['total']); ?></strong><span>总访问量</span></div>
+      <div><strong><?php echo pudubi_format_num($pdStats['days']); ?></strong><span>运行天数</span></div>
+      <?php if (!isset($this->options->showStatsBots) || (string)$this->options->showStatsBots !== '0'): ?>
+      <div><strong><?php echo pudubi_format_num($pdStats['online_bot']); ?></strong><span>搜索蜘蛛</span></div>
+      <?php endif; ?>
+    </div>
+    <p class="analytics-note">统计最近 <?php echo intval($this->options->onlineMinutes ?: 15); ?> 分钟在线访客</p>
+  </section>
+  <?php endif; ?>
   <section class="side-card">
     <h3>分类版块</h3>
     <ul class="side-list cats">

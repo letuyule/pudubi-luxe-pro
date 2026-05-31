@@ -19,6 +19,7 @@
 <?php if ($this->options->customHead) echo $this->options->customHead; ?>
 </head>
 <body>
+<?php pudubi_stats_track(); ?>
 <?php if ($this->options->topBarText): ?>
 <div class="site-strip"><div class="container strip-inner"><span><?php echo $this->options->topBarText; ?></span><span><?php $this->options->title(); ?></span></div></div>
 <?php endif; ?>

@@ -15,6 +15,22 @@ function themeConfig($form) {
     $form->addInput($homeTitle);
 
 
+    $enableStats = new Typecho_Widget_Helper_Form_Element_Radio('enableStats', array('1' => _t('开启'), '0' => _t('关闭')), '1', _t('站点统计模块'), _t('开启后自动记录 PV、在线人数、今日访问、总访问等，并在侧边栏显示。'));
+    $form->addInput($enableStats);
+
+    $statsTitle = new Typecho_Widget_Helper_Form_Element_Text('statsTitle', NULL, '站点状态', _t('统计模块标题'), _t('显示在侧边栏统计卡片顶部。'));
+    $form->addInput($statsTitle);
+
+    $onlineMinutes = new Typecho_Widget_Helper_Form_Element_Text('onlineMinutes', NULL, '15', _t('在线人数统计时间'), _t('单位：分钟；默认统计最近 15 分钟活跃访客。'));
+    $form->addInput($onlineMinutes);
+
+    $showStatsBots = new Typecho_Widget_Helper_Form_Element_Radio('showStatsBots', array('1' => _t('显示'), '0' => _t('隐藏')), '1', _t('显示蜘蛛数量'), _t('识别 Google/Baidu/Bing/搜狗等搜索引擎蜘蛛。'));
+    $form->addInput($showStatsBots);
+
+    $siteStartDate = new Typecho_Widget_Helper_Form_Element_Text('siteStartDate', NULL, '', _t('建站日期'), _t('格式：2024-01-01；用于计算运行天数。留空则按首条访问记录计算。'));
+    $form->addInput($siteStartDate);
+
+
     $authorDisplayName = new Typecho_Widget_Helper_Form_Element_Text('authorDisplayName', NULL, '普渡社会大学', _t('列表作者显示名'), _t('用于列表/文章页显示，避免暴露管理员邮箱；留空则显示账号昵称。'));
     $form->addInput($authorDisplayName);
 
@@ -154,4 +170,111 @@ function pudubi_author_display($widget = null) {
         $name = $opts->title ?: '站长';
     }
     return pudubi_e($name);
+}
+
+
+/* ===== Pudubi Analytics Pro v9 ===== */
+function pudubi_client_ip() {
+    $keys = array('HTTP_CF_CONNECTING_IP', 'HTTP_X_REAL_IP', 'HTTP_X_FORWARDED_FOR', 'REMOTE_ADDR');
+    foreach ($keys as $key) {
+        if (!empty($_SERVER[$key])) {
+            $ip = trim(explode(',', $_SERVER[$key])[0]);
+            return substr($ip, 0, 64);
+        }
+    }
+    return '0.0.0.0';
+}
+
+function pudubi_is_bot($ua = '') {
+    $ua = strtolower((string)$ua);
+    if ($ua === '') return 0;
+    $bots = array('bot','spider','crawl','slurp','baiduspider','googlebot','bingbot','sogou','360spider','bytespider','yisouspider','duckduckbot','yandex','semrush','ahrefs');
+    foreach ($bots as $bot) {
+        if (strpos($ua, $bot) !== false) return 1;
+    }
+    return 0;
+}
+
+function pudubi_stats_table() {
+    static $done = false;
+    $db = Typecho_Db::get();
+    $table = $db->getPrefix() . 'pudubi_visits';
+    if (!$done) {
+        $sql = "CREATE TABLE IF NOT EXISTS `{$table}` (
+            `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+            `ip` VARCHAR(64) NOT NULL DEFAULT '',
+            `ua` VARCHAR(255) NOT NULL DEFAULT '',
+            `url` VARCHAR(255) NOT NULL DEFAULT '',
+            `ref` VARCHAR(255) NOT NULL DEFAULT '',
+            `is_bot` TINYINT(1) NOT NULL DEFAULT 0,
+            `created` INT UNSIGNED NOT NULL DEFAULT 0,
+            PRIMARY KEY (`id`),
+            KEY `created` (`created`),
+            KEY `ip_created` (`ip`,`created`),
+            KEY `bot_created` (`is_bot`,`created`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4";
+        try { $db->query($sql); } catch (Exception $e) {}
+        $done = true;
+    }
+    return $table;
+}
+
+function pudubi_stats_track() {
+    $opts = Helper::options();
+    if (isset($opts->enableStats) && (string)$opts->enableStats === '0') return;
+    $uri = isset($_SERVER['REQUEST_URI']) ? (string)$_SERVER['REQUEST_URI'] : '/';
+    if (strpos($uri, '/admin') !== false || strpos($uri, '/action/') !== false) return;
+    $db = Typecho_Db::get();
+    $table = pudubi_stats_table();
+    $ip = addslashes(pudubi_client_ip());
+    $uaRaw = isset($_SERVER['HTTP_USER_AGENT']) ? $_SERVER['HTTP_USER_AGENT'] : '';
+    $ua = addslashes(substr($uaRaw, 0, 255));
+    $url = addslashes(substr($uri, 0, 255));
+    $ref = addslashes(substr(isset($_SERVER['HTTP_REFERER']) ? $_SERVER['HTTP_REFERER'] : '', 0, 255));
+    $isBot = pudubi_is_bot($uaRaw);
+    $now = time();
+    try {
+        $db->query("INSERT INTO `{$table}` (`ip`,`ua`,`url`,`ref`,`is_bot`,`created`) VALUES ('{$ip}','{$ua}','{$url}','{$ref}',{$isBot},{$now})");
+        // 轻量清理：保留最近 180 天访问明细，避免表无限增长
+        if (mt_rand(1, 200) === 1) {
+            $old = $now - 180 * 86400;
+            $db->query("DELETE FROM `{$table}` WHERE `created` < {$old}");
+        }
+    } catch (Exception $e) {}
+}
+
+function pudubi_stats_scalar($sql, $default = 0) {
+    try {
+        $db = Typecho_Db::get();
+        $row = $db->fetchRow($db->query($sql));
+        if (!$row) return $default;
+        $val = array_values($row)[0];
+        return intval($val);
+    } catch (Exception $e) { return $default; }
+}
+
+function pudubi_stats_data() {
+    $table = pudubi_stats_table();
+    $opts = Helper::options();
+    $now = time();
+    $today = strtotime(date('Y-m-d 00:00:00'));
+    $yesterday = $today - 86400;
+    $onlineMinutes = isset($opts->onlineMinutes) ? max(1, intval($opts->onlineMinutes)) : 15;
+    $onlineSince = $now - $onlineMinutes * 60;
+    $first = pudubi_stats_scalar("SELECT MIN(`created`) FROM `{$table}` WHERE `created` > 0", $today);
+    if (isset($opts->siteStartDate) && preg_match('/^\d{4}-\d{2}-\d{2}$/', trim($opts->siteStartDate))) {
+        $first = strtotime(trim($opts->siteStartDate));
+    }
+    return array(
+        'online' => pudubi_stats_scalar("SELECT COUNT(DISTINCT `ip`) FROM `{$table}` WHERE `created` >= {$onlineSince}"),
+        'online_bot' => pudubi_stats_scalar("SELECT COUNT(DISTINCT `ip`) FROM `{$table}` WHERE `created` >= {$onlineSince} AND `is_bot` = 1"),
+        'today' => pudubi_stats_scalar("SELECT COUNT(*) FROM `{$table}` WHERE `created` >= {$today}"),
+        'yesterday' => pudubi_stats_scalar("SELECT COUNT(*) FROM `{$table}` WHERE `created` >= {$yesterday} AND `created` < {$today}"),
+        'total' => pudubi_stats_scalar("SELECT COUNT(*) FROM `{$table}`"),
+        'days' => max(1, floor(($now - intval($first)) / 86400) + 1),
+    );
+}
+
+function pudubi_format_num($num) {
+    return number_format(max(0, intval($num)));
 }
